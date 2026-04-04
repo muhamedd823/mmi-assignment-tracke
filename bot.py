@@ -1,85 +1,85 @@
 import telebot
-from curl_cffi import requests # Use this instead of standard requests
+from curl_cffi import requests
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- SETTINGS ---
+# --- CONFIG ---
 BOT_TOKEN = '8679659340:AAFDka-7x6doy5e_9areii48bKXOy5Egh-s'
 API_URL = 'https://lms.mersamedia.org/api_assignment_tracking.php?key=MMI_SECRET_2026'
 
-bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def fetch_data(chat_id=None):
-    """
-    Impersonates Chrome's encryption (TLS) signature to bypass SiteGround 403.
-    """
+def fetch_mmi_data():
     try:
-        r = requests.get(API_URL, impersonate="chrome", timeout=25)
-        
+        # Impersonate chrome to avoid 403 blocks from hosting providers
+        r = requests.get(API_URL, impersonate="chrome", timeout=30)
         if r.status_code == 200:
             return r.json()
-        else:
-            if chat_id: bot.send_message(chat_id, f"❌ SiteGround Blocked us (Status {r.status_code})")
-            return None
+        print(f"Server Error: {r.status_code}")
+        return None
     except Exception as e:
-        if chat_id: bot.send_message(chat_id, f"⚠️ Connection Error: {str(e)[:50]}")
+        print(f"Connection Error: {e}")
         return None
 
 @bot.message_handler(commands=['start', 'menu'])
-def show_menu(message):
-    data = fetch_data(message.chat.id)
+def send_welcome(message):
+    data = fetch_mmi_data()
     if not data or 'assignments' not in data:
-        return 
+        bot.reply_to(message, "❌ Unable to connect to MMI Database. Check API/Server.")
+        return
 
     markup = InlineKeyboardMarkup()
-    for task in data['assignments']:
-        t_id = task.get('assignment_id')
-        title = task.get('title', 'Assignment')
-        markup.add(InlineKeyboardButton(f"📝 {title[:30]}", callback_data=f"v_{t_id}"))
+    for item in data['assignments']:
+        btn_text = f"📝 {item['title'][:25]}..."
+        markup.add(InlineKeyboardButton(btn_text, callback_data=f"view_{item['assignment_id']}"))
 
-    bot.send_message(message.chat.id, "✅ *MMI Tracking System Online*\nSelect an assignment:", reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(message.chat.id, "📊 *MMI Assignment Tracker*\nSelect an assignment to see full details:", 
+                     reply_markup=markup, parse_mode='Markdown')
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith('v_'))
-def handle_details(c):
-    target_id = int(c.data.split('_')[1])
-    data = fetch_data(c.message.chat.id)
-    if not data: return
+@bot.callback_query_handler(func=lambda call: call.data.startswith('view_'))
+def show_details(call):
+    target_id = int(call.data.split('_')[1])
+    data = fetch_mmi_data()
+    
+    if not data:
+        bot.answer_callback_query(call.id, "Error fetching data.")
+        return
 
-    task = next((t for t in data['assignments'] if t['assignment_id'] == target_id), None)
-
+    # Find the specific assignment
+    task = next((x for x in data['assignments'] if x['assignment_id'] == target_id), None)
+    
     if task:
-        stats = task['statistics']
-        subs = task.get('submissions', {})
+        l = task['lists']
+        s = task['stats']
         
-        # Extract the three lists
-        on_time = subs.get('on_time', [])
-        late = subs.get('late', [])
-        not_sub = subs.get('not_submitted', [])
+        # Build lists
+        on_time_str = "\n".join([f"• {p['name']}" for p in l['on_time']]) or "None"
+        late_str = "\n".join([f"• {p['name']} (Late)" for p in l['late']]) or "None"
+        missing_str = "\n".join([f"• {p['name']}" for p in l['not_submitted']]) or "None 🎉"
 
-        # Format the lists into readable strings
-        on_time_text = "\n".join([f"• {x['trainee_name']}" for x in on_time]) if on_time else "None"
-        late_text = "\n".join([f"• {x['trainee_name']}" for x in late]) if late else "None"
-        not_sub_text = "\n".join([f"• {x['trainee_name']}" for x in not_sub]) if not_sub else "None 🎉"
-        
-        # Construct the comprehensive report
         report = (
-            f"📊 *{task['title']}*\n"
+            f"📌 *{task['title']}*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 {task['time_info']}\n"
-            f"📈 Rate: *{round(float(stats.get('submission_rate', 0)), 1)}%* ({stats['submitted_count']} Submitted, {stats['not_submitted_count']} Missing)\n"
+            f"⏰ *Deadline:* {task['deadline']}\n"
+            f"ℹ️ *Status:* {task['time_info']}\n"
+            f"📊 *Submission Rate:* {s['rate']}%\n"
             f"━━━━━━━━━━━━━━━━━━\n\n"
-            f"✅ *ON TIME ({len(on_time)}):*\n{on_time_text}\n\n"
-            f"⚠️ *LATE ({len(late)}):*\n{late_text}\n\n"
-            f"🚫 *NOT SUBMITTED ({len(not_sub)}):*\n{not_sub_text}"
+            f"✅ *SUBMITTED ON TIME ({len(l['on_time'])}):*\n{on_time_str}\n\n"
+            f"⚠️ *SUBMITTED LATE ({len(l['late'])}):*\n{late_text}\n\n"
+            f"🚫 *NOT SUBMITTED ({len(l['not_submitted'])}):*\n{missing_str}\n"
+            f"━━━━━━━━━━━━━━━━━━"
         )
         
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Back to Menu", callback_data="back"))
-        bot.edit_message_text(report, c.message.chat.id, c.message.message_id, parse_mode='Markdown', reply_markup=markup)
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("⬅️ Back to List", callback_data="main_menu"))
+        
+        bot.edit_message_text(report, call.message.chat.id, call.message.message_id, 
+                              parse_mode='Markdown', reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda c: c.data == "back")
-def back(c):
-    bot.delete_message(c.message.chat.id, c.message.message_id)
-    show_menu(c.message)
+@bot.callback_query_handler(func=lambda call: call.data == "main_menu")
+def back_to_menu(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    send_welcome(call.message)
 
 if __name__ == "__main__":
-    print("Bot is running...")
+    print("Bot is active...")
     bot.infinity_polling()
