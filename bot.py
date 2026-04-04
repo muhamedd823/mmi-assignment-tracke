@@ -18,7 +18,7 @@ def run_web_server():
 
 # 2. Initialize Telegram Bot
 # Ensure your Token is set in Render's Environment Variables
-BOT_TOKEN = os.environ.get("BOT_TOKEN") 
+BOT_TOKEN = os.environ.get("8679659340:AAFDka-7x6doy5e_9areii48bKXOy5Egh-s") 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # --- YOUR DATABASE LOGIC (Example) ---
