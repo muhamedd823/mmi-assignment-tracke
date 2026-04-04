@@ -6,9 +6,7 @@ from threading import Thread
 from curl_cffi import requests as cur_requests
 
 # --- CONFIGURATION ---
-# Replace this with a new token if you revoked the old one
 BOT_TOKEN = "8679659340:AAFDka-7x6doy5e_9areii48bKXOy5Egh-s"
-# Ensure there are no spaces in this URL
 API_URL = "https://lms.mersamedia.org/api_assignment_tracking.php?key=MMI_SECRET_2026"
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -23,96 +21,70 @@ def run_web_server():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# --- DATA FETCHING (SITEGROUND BYPASS) ---
+# --- THE FIX: ADVANCED FETCHING ---
 def fetch_mmi_data():
     try:
-        # These headers make Render look exactly like a real Chrome Browser
+        # Mimicking a real Chrome browser on Windows 10
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://lms.mersamedia.org/",
-            "Connection": "keep-alive"
+            "X-Requested-With": "XMLHttpRequest" # Some firewalls require this for API calls
         }
         
-        # impersonate="chrome120" mimics the TLS fingerprint to bypass WAF/Firewalls
+        # We use impersonate="chrome110" and verify=False to bypass SSL handshake blocks
         response = cur_requests.get(
             API_URL, 
             headers=headers,
-            impersonate="chrome120", 
-            timeout=30
+            impersonate="chrome110", 
+            timeout=25,
+            verify=False 
         )
         
-        print(f"DEBUG: Status Code {response.status_code}")
-        
         if response.status_code == 200:
-            return response.json()
+            return response.json(), 200
         else:
-            print(f"API Error: {response.status_code} - {response.text[:100]}")
-            return None
+            return None, response.status_code
             
     except Exception as e:
         print(f"Connection Exception: {e}")
-        return None
+        return None, "Connection Error"
 
 # --- BOT HANDLERS ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    welcome_text = (
-        "📊 **MMI Assignment Tracker**\n\n"
-        "Click /active to get the latest trainee submission stats.\n"
-        "Click /status to check if the server is healthy."
-    )
-    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
-
-@bot.message_handler(commands=['status'])
-def check_status(message):
-    bot.send_message(message.chat.id, "✅ Bot is connected and monitoring the LMS.")
+    bot.send_message(message.chat.id, "📊 **MMI Assignment Tracker Ready.**\nUse /active to pull data.")
 
 @bot.message_handler(commands=['active'])
 def show_active_assignments(message):
-    msg = bot.send_message(message.chat.id, "📂 Connecting to LMS Database...")
+    status_msg = bot.send_message(message.chat.id, "🔄 Connecting to MMI LMS...")
     
-    data = fetch_mmi_data()
+    data, status_code = fetch_mmi_data()
     
-    if not data:
-        bot.edit_message_text("❌ Connection failed. SiteGround might be blocking Render. Check logs.", 
-                              message.chat.id, msg.message_id)
+    if status_code != 200:
+        bot.edit_message_text(f"❌ Error: API returned Status {status_code}.\n(If 403, SiteGround is blocking Render's IP.)", 
+                              message.chat.id, status_msg.message_id)
         return
 
-    if isinstance(data, list) and len(data) > 0:
-        report = "📋 **MMI Assignment Report**\n\n"
+    if data and isinstance(data, list):
+        report = "📋 **Latest Assignment Stats**\n\n"
         for item in data:
-            title = item.get('title', 'Unknown Assignment')
+            title = item.get('title', 'Assignment')
             sub = item.get('submitted_count', 0)
-            miss = item.get('missing_count', 0)
+            miss = item.get('not_submitted_count', 0) # Fixed key name from your PHP
             rate = item.get('submission_rate', '0%')
             
-            report += f"📝 *{title}*\n"
-            report += f"✅ Submissions: {sub}\n"
-            report += f"❌ Missing: {miss}\n"
-            report += f"📊 Completion: {rate}\n"
-            report += "--- --- --- ---\n"
+            report += f"📝 *{title}*\n✅ {sub} | ❌ {miss} | 📈 {rate}\n\n"
         
-        bot.edit_message_text(report, message.chat.id, msg.message_id, parse_mode="Markdown")
+        bot.edit_message_text(report, message.chat.id, status_msg.message_id, parse_mode="Markdown")
     else:
-        bot.edit_message_text("ℹ️ No active assignments found or API returned empty.", 
-                              message.chat.id, msg.message_id)
+        bot.edit_message_text("⚠️ API connected but returned no data.", message.chat.id, status_msg.message_id)
 
 # --- MAIN RUNNER ---
 if __name__ == "__main__":
-    # Start Flask server
     t = Thread(target=run_web_server)
     t.daemon = True
     t.start()
-
-    # Give Render time to cycle instances
-    time.sleep(5)
-
-    print("Bot is now polling...")
-    while True:
-        try:
-            bot.infinity_polling(timeout=25, long_polling_timeout=25)
-        except Exception as e:
-            print(f"Polling Crash: {e}")
-            time.sleep(10)
+    time.sleep(2)
+    bot.infinity_polling()
