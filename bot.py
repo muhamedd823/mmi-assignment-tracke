@@ -13,7 +13,6 @@ def fetch_data(chat_id=None):
     Impersonates Chrome's encryption (TLS) signature to bypass SiteGround 403.
     """
     try:
-        # 'impersonate' is the magic key that stops the 403 error
         r = requests.get(API_URL, impersonate="chrome", timeout=25)
         
         if r.status_code == 200:
@@ -49,18 +48,28 @@ def handle_details(c):
 
     if task:
         stats = task['statistics']
-        not_sub = task['submissions']['not_submitted']
-        names = "\n".join([f"• {x['trainee_name']}" for x in not_sub]) if not_sub else "✅ All Trainees Submitted!"
+        subs = task.get('submissions', {})
         
+        # Extract the three lists
+        on_time = subs.get('on_time', [])
+        late = subs.get('late', [])
+        not_sub = subs.get('not_submitted', [])
+
+        # Format the lists into readable strings
+        on_time_text = "\n".join([f"• {x['trainee_name']}" for x in on_time]) if on_time else "None"
+        late_text = "\n".join([f"• {x['trainee_name']}" for x in late]) if late else "None"
+        not_sub_text = "\n".join([f"• {x['trainee_name']}" for x in not_sub]) if not_sub else "None 🎉"
+        
+        # Construct the comprehensive report
         report = (
             f"📊 *{task['title']}*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🕒 {task['time_info']}\n"
-            f"📥 Submitted: *{stats['submitted_count']}*\n"
-            f"❌ Missing: *{stats['not_submitted_count']}*\n"
-            f"📈 Rate: *{round(float(stats.get('submission_rate', 0)), 1)}%*\n\n"
-            f"🚫 *NOT SUBMITTED:* \n{names}\n"
-            f"━━━━━━━━━━━━━━━━━━"
+            f"📈 Rate: *{round(float(stats.get('submission_rate', 0)), 1)}%* ({stats['submitted_count']} Submitted, {stats['not_submitted_count']} Missing)\n"
+            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ *ON TIME ({len(on_time)}):*\n{on_time_text}\n\n"
+            f"⚠️ *LATE ({len(late)}):*\n{late_text}\n\n"
+            f"🚫 *NOT SUBMITTED ({len(not_sub)}):*\n{not_sub_text}"
         )
         
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Back to Menu", callback_data="back"))
@@ -72,4 +81,5 @@ def back(c):
     show_menu(c.message)
 
 if __name__ == "__main__":
+    print("Bot is running...")
     bot.infinity_polling()
