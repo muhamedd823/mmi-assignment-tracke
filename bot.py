@@ -71,7 +71,7 @@ def create_assignment_buttons(assignments):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Fetching fresh data...")
+    await update.message.reply_text("⏳ Fetching data...")
     data = await fetch_data()
     if not data or "assignments" not in data:
         await update.message.reply_text("❌ Could not fetch data.")
@@ -79,7 +79,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.bot_data["assignment_data"] = data
     keyboard, active = create_assignment_buttons(data["assignments"])
-
     text = f"📚 **Active Assignments** ({active})\nSelect one:"
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
@@ -103,34 +102,120 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("✅ Refreshed!", reply_markup=create_assignment_buttons(assignments)[0])
         return
 
-    # ... (I kept the rest exactly the same as before for brevity)
-    # You can keep all your previous button_handler logic here.
-    # For now, to make it work fast, I'll give you the full working version below.
+    if action == "all_assignments":
+        text = "📋 **All Assignments**\n\n"
+        for ass in assignments:
+            time_str = format_time_ago(ass.get("minutes_past", 0))
+            rate = round(ass["statistics"].get("submission_rate", 0), 1)
+            text += f"**{ass['title']}**\n⏰ {time_str}\n📈 Rate: {rate}%\n\n"
+        kb = [[InlineKeyboardButton("⬅ Back", callback_data="back_to_list")]]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
 
-# ================== FULL WORKING VERSION (Replace your whole file) ==================
+    if action == "back_to_list":
+        keyboard, _ = create_assignment_buttons(assignments)
+        await query.edit_message_text("📚 Select an assignment:", reply_markup=keyboard)
+        return
 
-# Paste the full code I gave in my earlier message (the long one with missing_this showing late time)
+    if action.startswith("ass_"):
+        ass_id = int(action[4:])
+        selected = next((a for a in assignments if a["assignment_id"] == ass_id), None)
+        if not selected:
+            await query.edit_message_text("Assignment not found.")
+            return
 
-# To save time, here is the **most important part** for Render:
+        context.bot_data["selected_assignment"] = selected
+        time_str = format_time_ago(selected.get("minutes_past", 0))
+        text = f"✅ **{selected['title']}**\n⏰ {time_str}\n\nChoose option:"
+
+        keyboard = [
+            [InlineKeyboardButton("📊 Summary", callback_data="summary_this")],
+            [InlineKeyboardButton("❌ Missing & Late", callback_data="missing_this")],
+            [InlineKeyboardButton("⏳ Remaining Time", callback_data="remaining_this")],
+            [InlineKeyboardButton("⬅ Back to List", callback_data="back_to_list")],
+        ]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if action == "summary_this":
+        ass = context.bot_data.get("selected_assignment")
+        if not ass: return
+        stats = ass["statistics"]
+        rate = round(stats.get("submission_rate", 0), 1)
+        total = stats["submitted_count"] + stats.get("not_submitted_count", 0)
+        time_str = format_time_ago(ass.get("minutes_past", 0))
+        text = f"📊 **Summary**\n**{ass['title']}**\n⏰ {time_str}\n\n✅ Submitted: {stats['submitted_count']}/{total}\n📈 Rate: {rate}%"
+        kb = [[InlineKeyboardButton("⬅ Back", callback_data="back_to_selected")]]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if action == "missing_this":
+        ass = context.bot_data.get("selected_assignment")
+        if not ass: return
+        text = f"❌ **Missing & Late**\n**{ass['title']}**\n\n"
+        late_list = ass["submissions"].get("late", [])
+        not_sub_list = ass["submissions"].get("not_submitted", [])
+
+        if late_list:
+            text += "🟠 **Late Submissions:**\n"
+            for s in late_list:
+                late_min = s.get("late_by_minutes", 0)
+                late_text = minutes_to_human_late(late_min)
+                text += f"• {s['trainee_name']} — **{late_text}**\n"
+            text += "\n"
+
+        if not_sub_list:
+            text += "🔴 **Not Submitted:**\n"
+            for s in not_sub_list:
+                text += f"• {s['trainee_name']}\n"
+
+        if not late_list and not not_sub_list:
+            text += "🎉 Everyone is on time!"
+
+        kb = [[InlineKeyboardButton("⬅ Back", callback_data="back_to_selected")]]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if action == "remaining_this":
+        ass = context.bot_data.get("selected_assignment")
+        if not ass: return
+        time_str = format_time_ago(ass.get("minutes_past", 0))
+        text = f"⏳ **Remaining Time**\n**{ass['title']}**\n\nDeadline passed **{time_str}** ago."
+        kb = [[InlineKeyboardButton("⬅ Back", callback_data="back_to_selected")]]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if action == "back_to_selected":
+        ass = context.bot_data.get("selected_assignment")
+        if ass:
+            time_str = format_time_ago(ass.get("minutes_past", 0))
+            text = f"✅ **{ass['title']}**\n⏰ {time_str}\n\nChoose action:"
+            keyboard = [
+                [InlineKeyboardButton("📊 Summary", callback_data="summary_this")],
+                [InlineKeyboardButton("❌ Missing & Late", callback_data="missing_this")],
+                [InlineKeyboardButton("⏳ Remaining Time", callback_data="remaining_this")],
+                [InlineKeyboardButton("⬅ Back to List", callback_data="back_to_list")],
+            ]
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 def main():
-    print("🚀 Starting bot on Render...")
+    print("🚀 Starting Assignment Tracking Bot on Render...")
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    # Run polling
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    # Keep-alive for Render free tier
+    # Keep-alive thread for Render free tier
     def keep_alive():
         while True:
-            print(f"[{time.strftime('%H:%M:%S')}] Bot is alive...")
+            print(f"[{time.strftime('%H:%M:%S')}] Bot keep-alive ping...")
             time.sleep(240)  # every 4 minutes
 
     threading.Thread(target=keep_alive, daemon=True).start()
-    
+
     asyncio.run(main())
