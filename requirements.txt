@@ -4,4 +4,3 @@ apscheduler
 curl_cffi
 flask
 gunicorn
-
